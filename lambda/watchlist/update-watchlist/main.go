@@ -62,6 +62,29 @@ func Handler(request events.APIGatewayProxyRequest) (events.APIGatewayProxyRespo
 		}, nil
 	}
 
+	if getResult.Item == nil {
+		// Wallet address doesn't exist, create a new item with an empty collection
+		createInput := &dynamodb.PutItemInput{
+			TableName: aws.String(tableName),
+			Item: map[string]*dynamodb.AttributeValue{
+				"walletAddress": {
+					S: aws.String(WalletAddress),
+				},
+				"collection": {
+					SS: []*string{},
+				},
+			},
+		}
+
+		_, err := svc.PutItem(createInput)
+		if err != nil {
+			return events.APIGatewayProxyResponse{
+				StatusCode: 200,
+				Body:       string("error"),
+			}, nil
+		}
+	}
+
 	// Update the collection based on the request value
 	updateExpression := ""
 	expressionAttributeValues := map[string]*dynamodb.AttributeValue{}

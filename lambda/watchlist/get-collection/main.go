@@ -1,89 +1,142 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
-	"fmt"
+
+	"log"
+	"net/http"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
+	"strings"
 )
 
-func main() {
-	lambda.Start(handler)
+var tableName = "Collection-Watchlist" // Replace with your DynamoDB table name
+var dynamoDBClient *dynamodb.DynamoDB
+
+// Watchlist struct representing the DynamoDB item
+type Watchlist struct {
+	WalletAddress string   `json:"walletAddress"`
+	Collection    []string `json:"collection"`
 }
 
-type MyEvent struct {
-	WalletAddress string `json:"walletAddress"`
+// Handler function to process the Lambda event
+func Handler(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+	// Parse the request body
+	walletAddress := "d"
+
+	// Get the collection by walletAddress
+	result, err := getCollection(walletAddress)
+	if err != nil {
+		log.Printf("Error getting collection: %v", err)
+		return events.APIGatewayProxyResponse{
+			StatusCode: http.StatusInternalServerError,
+			Body:       http.StatusText(http.StatusInternalServerError),
+		}, nil
+	}
+
+	// If walletAddress doesn't exist, create a new row with an empty collection
+	if result == nil {
+		if err := createEmptyWatchlist(walletAddress); err != nil {
+			log.Printf("Error creating empty watchlist: %v", err)
+			return events.APIGatewayProxyResponse{
+				StatusCode: http.StatusInternalServerError,
+				Body:       http.StatusText(http.StatusInternalServerError),
+			}, nil
+		}
+	}
+
+	// Build the response
+	responseBody, err := json.Marshal(result.Collection)
+	if err != nil {
+		log.Printf("Error marshaling response body: %v", err)
+		return events.APIGatewayProxyResponse{
+			StatusCode: http.StatusInternalServerError,
+			Body:       http.StatusText(http.StatusInternalServerError),
+		}, nil
+	}
+
+	var responseList []string
+	if err := json.Unmarshal(responseBody, &responseList); err != nil {
+		log.Printf("Error unmarshaling response body: %v", err)
+		return events.APIGatewayProxyResponse{
+			StatusCode: http.StatusInternalServerError,
+			Body:       http.StatusText(http.StatusInternalServerError),
+		}, nil
+	}
+
+	responseString := strings.Join(responseList, ",")
+
+	return events.APIGatewayProxyResponse{
+		StatusCode: http.StatusOK,
+		Body:       responseString,
+	}, nil
 }
 
-type CollectionResponse struct {
-	Collection []string `json:"collection"`
-}
-
-// arn:aws:dynamodb:ap-southeast-2:120657039516:table/Collection-Watchlist
-
-func handler(request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
-
-	// walletAddress := request.QueryStringParameters["walletAddress"]
-
-	// err := json.Unmarshal([]byte(request.Body), &bodyData)
-
-	svc := dynamodb.New(session.New())
-
-	walletAddress := "a"
-
-	input := &dynamodb.GetItemInput{
-		TableName: aws.String("Collection-Watchlist"), // Replace with your table name
+// Function to get the collection by walletAddress from DynamoDB
+func getCollection(walletAddress string) (*Watchlist, error) {
+	result, err := dynamoDBClient.GetItem(&dynamodb.GetItemInput{
+		TableName: aws.String(tableName),
 		Key: map[string]*dynamodb.AttributeValue{
 			"walletAddress": {
 				S: aws.String(walletAddress),
 			},
 		},
-	}
-
-	// Retrieve the item from DynamoDB
-	result, err := svc.GetItem(input)
+	})
 	if err != nil {
-		return events.APIGatewayProxyResponse{}, err
+		return nil, err
 	}
 
-	// Process the result
 	if result.Item == nil {
-		return events.APIGatewayProxyResponse{}, fmt.Errorf("Item not found")
+		return nil, nil
 	}
 
-	// Extract the collection attribute value
-	collectionAttr := result.Item["collection"]
-	if collectionAttr == nil || collectionAttr.SS == nil {
-		return events.APIGatewayProxyResponse{}, fmt.Errorf("Collection attribute not found")
-	}
-
-	// Convert []*string to []string
-	collection := make([]string, 0)
-	for _, s := range collectionAttr.SS {
-		collection = append(collection, *s)
-	}
-
-	// Create the response
-	response := CollectionResponse{
-		Collection: collection,
-	}
-	body, err := json.Marshal(response)
+	watchlist := &Watchlist{}
+	err = dynamodbattribute.UnmarshalMap(result.Item, watchlist)
 	if err != nil {
-		return events.APIGatewayProxyResponse{}, err
+		return nil, err
 	}
 
-	// Return the response
-	return events.APIGatewayProxyResponse{
-		StatusCode: 200,
-		Body:       string(body),
-	}, nil
-
+	return watchlist, nil
 }
 
-type GetQuery struct {
-	walletAddress string
+// Function to create an empty watchlist with the given walletAddress
+func createEmptyWatchlist(walletAddress string) error {
+	watchlist := &Watchlist{
+		WalletAddress: walletAddress,
+		Collection:    []string{},
+	}
+
+	item, err := dynamodbattribute.MarshalMap(watchlist)
+	if err != nil {
+		return err
+	}
+
+	_, err = dynamoDBClient.PutItem(&dynamodb.PutItemInput{
+		TableName: aws.String(tableName),
+		Item:      item,
+	})
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func main() {
+	// Create a new DynamoDB session
+	sess, err := session.NewSession()
+	if err != nil {
+		log.Fatalf("Failed to create DynamoDB session: %v", err)
+	}
+
+	// Create a new DynamoDB client
+	dynamoDBClient = dynamodb.New(sess)
+
+	lambda.Start(Handler)
 }
