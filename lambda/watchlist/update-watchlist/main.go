@@ -1,153 +1,193 @@
 package main
 
 import (
+	"context"
+	"fmt"
+	"log"
+	"net/http"
+
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
 )
 
 var tableName = "Collection-Watchlist" // Replace with your DynamoDB table name
+var dynamoDBClient *dynamodb.DynamoDB
 
-// Request struct to parse the incoming API Gateway request
-type Request struct {
-	WalletAddress string `json:"walletAddress"`
-	Value         string `json:"value"`
+// Watchlist struct representing the DynamoDB item
+type Watchlist struct {
+	WalletAddress string   `json:"walletAddress"`
+	Collection    []string `json:"collection"`
 }
 
-// Response struct for the API Gateway response
-type Response struct {
-	Message string `json:"message"`
+// Request struct representing the request body
+type Request struct {
+	WalletAddress  string `json:"walletAddress"`
+	CollectionItem string `json:"collectionItem"`
 }
 
 // Handler function to process the Lambda event
-func Handler(request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+func Handler(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
 	// Parse the request body
-	// var req Request
-	// if err := request.UnmarshalJSON(&req); err != nil {
-	// 	return Response{}, fmt.Errorf("failed to parse request body: %v", err)
 
 	WalletAddress := "b"
-	Value := "sui"
-	// }
+	CollectionItem := "bitcoin"
 
-	// Create a new DynamoDB session
-	sess, err := session.NewSession()
+	// Check if the walletAddress exists
+	exists, err := checkWalletAddressExists(WalletAddress)
 	if err != nil {
+		log.Printf("Error checking wallet address: %v", err)
 		return events.APIGatewayProxyResponse{
-			StatusCode: 200,
-			Body:       string("error"),
-		}, nil
-	}
-
-	// Create a new DynamoDB client
-	svc := dynamodb.New(sess)
-
-	// Get the existing collection for the given wallet address
-	getInput := &dynamodb.GetItemInput{
-		TableName: aws.String(tableName),
-		Key: map[string]*dynamodb.AttributeValue{
-			"walletAddress": {
-				S: aws.String(WalletAddress),
+				StatusCode: http.StatusInternalServerError,
+				Body:       http.StatusText(http.StatusInternalServerError),
 			},
-		},
+			nil
 	}
 
-	getResult, err := svc.GetItem(getInput)
-	if err != nil {
-		return events.APIGatewayProxyResponse{
-			StatusCode: 200,
-			Body:       string("error"),
-		}, nil
-	}
-
-	if getResult.Item == nil {
-		// Wallet address doesn't exist, create a new item with an empty collection
-		createInput := &dynamodb.PutItemInput{
-			TableName: aws.String(tableName),
-			Item: map[string]*dynamodb.AttributeValue{
-				"walletAddress": {
-					S: aws.String(WalletAddress),
-				},
-				"collection": {
-					SS: []*string{},
-				},
-			},
-		}
-
-		_, err := svc.PutItem(createInput)
+	if !exists {
+		// Insert walletAddress and collectionItem into the Collection list and add to database
+		err := insertNewWalletAddress(WalletAddress, CollectionItem)
 		if err != nil {
+			log.Printf("Error inserting wallet address: %v", err)
 			return events.APIGatewayProxyResponse{
-				StatusCode: 200,
-				Body:       string("error"),
-			}, nil
-		}
-	}
-
-	// Update the collection based on the request value
-	updateExpression := ""
-	expressionAttributeValues := map[string]*dynamodb.AttributeValue{}
-	if getResult.Item == nil {
-		// If the collection doesn't exist, create a new collection with the request value
-		updateExpression = "SET #col = :val"
-		expressionAttributeValues[":val"] = &dynamodb.AttributeValue{
-			SS: []*string{aws.String(Value)},
+					StatusCode: http.StatusInternalServerError,
+					Body:       http.StatusText(http.StatusInternalServerError),
+				},
+				nil
 		}
 	} else {
-		// If the collection exists, add the request value if it doesn't exist, or remove it if it already exists
-		collection := getResult.Item["collection"].SS
-		isValueExists := false
-		for _, v := range collection {
-			if *v == Value {
-				isValueExists = true
+		// Get the current collection for the given walletAddress
+		watchlist, err := getWatchlist(WalletAddress)
+		if err != nil {
+			log.Printf("Error getting watchlist: %v", err)
+			return events.APIGatewayProxyResponse{
+					StatusCode: http.StatusInternalServerError,
+					Body:       http.StatusText(http.StatusInternalServerError),
+				},
+				nil
+		}
+
+		// Check if the collectionItem exists in the collection
+		exists := false
+		for i, item := range watchlist.Collection {
+			if item == CollectionItem {
+				exists = true
+				// Remove the collectionItem from collection
+				watchlist.Collection = append(watchlist.Collection[:i], watchlist.Collection[i+1:]...)
 				break
 			}
 		}
 
-		if isValueExists {
-			updateExpression = "DELETE #col :val"
-			expressionAttributeValues[":val"] = &dynamodb.AttributeValue{
-				SS: []*string{aws.String(Value)},
-			}
-		} else {
-			updateExpression = "ADD #col :val"
-			expressionAttributeValues[":val"] = &dynamodb.AttributeValue{
-				SS: []*string{aws.String(Value)},
-			}
+		// Add the collectionItem to collection if it doesn't exist
+		if !exists {
+			watchlist.Collection = append(watchlist.Collection, CollectionItem)
+		}
+
+		// Save the updated watchlist to DynamoDB
+		err = saveWatchlist(watchlist)
+		if err != nil {
+			log.Printf("Error saving watchlist: %v", err)
+			return events.APIGatewayProxyResponse{
+					StatusCode: http.StatusInternalServerError,
+					Body:       http.StatusText(http.StatusInternalServerError),
+				},
+				nil
 		}
 	}
 
-	// Update the collection for the given wallet address
-	input := &dynamodb.UpdateItemInput{
-		TableName: aws.String(tableName),
-		Key: map[string]*dynamodb.AttributeValue{
-			"walletAddress": {
-				S: aws.String(WalletAddress),
-			},
-		},
-		UpdateExpression: aws.String(updateExpression),
-		ExpressionAttributeNames: map[string]*string{
-			"#col": aws.String("collection"),
-		},
-		ExpressionAttributeValues: expressionAttributeValues,
-		ReturnValues:              aws.String("ALL_NEW"),
-	}
-
-	_, err = svc.UpdateItem(input)
-	if err != nil {
-		return events.APIGatewayProxyResponse{
-			StatusCode: 200,
-			Body:       string("error"),
-		}, nil
-	}
-
 	return events.APIGatewayProxyResponse{
-		StatusCode: 200,
-		Body:       string("updated"),
+		StatusCode: http.StatusOK,
+		Body:       "Success",
 	}, nil
 }
 
+// Function to check if the walletAddress exists in DynamoDB
+func checkWalletAddressExists(walletAddress string) (bool, error) {
+	result, err := dynamoDBClient.GetItem(&dynamodb.GetItemInput{
+		TableName: aws.String(tableName),
+		Key: map[string]*dynamodb.AttributeValue{
+			"walletAddress": {
+				S: aws.String(walletAddress),
+			},
+		},
+	})
+	if err != nil {
+		return false, err
+	}
+
+	return result.Item != nil, nil
+}
+
+// Function to insert a new walletAddress and collectionItem into DynamoDB
+func insertNewWalletAddress(walletAddress, collectionItem string) error {
+	watchlist := &Watchlist{
+		WalletAddress: walletAddress,
+		Collection:    []string{collectionItem},
+	}
+
+	item, err := dynamodbattribute.MarshalMap(watchlist)
+	if err != nil {
+		return err
+	}
+
+	_, err = dynamoDBClient.PutItem(&dynamodb.PutItemInput{
+		TableName: aws.String(tableName),
+		Item:      item,
+	})
+	return err
+}
+
+// Function to get the watchlist by walletAddress from DynamoDB
+func getWatchlist(walletAddress string) (*Watchlist, error) {
+	result, err := dynamoDBClient.GetItem(&dynamodb.GetItemInput{
+		TableName: aws.String(tableName),
+		Key: map[string]*dynamodb.AttributeValue{
+			"walletAddress": {
+				S: aws.String(walletAddress),
+			},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if result.Item == nil {
+		return nil, fmt.Errorf("Watchlist not found for walletAddress: %s", walletAddress)
+	}
+
+	watchlist := &Watchlist{}
+	err = dynamodbattribute.UnmarshalMap(result.Item, watchlist)
+	if err != nil {
+		return nil, err
+	}
+
+	return watchlist, nil
+}
+
+// Function to save the watchlist to DynamoDB
+func saveWatchlist(watchlist *Watchlist) error {
+	item, err := dynamodbattribute.MarshalMap(watchlist)
+	if err != nil {
+		return err
+	}
+
+	_, err = dynamoDBClient.PutItem(&dynamodb.PutItemInput{
+		TableName: aws.String(tableName),
+		Item:      item,
+	})
+	return err
+}
+
 func main() {
+	sess, err := session.NewSession()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	dynamoDBClient = dynamodb.New(sess)
+
 	lambda.Start(Handler)
 }
