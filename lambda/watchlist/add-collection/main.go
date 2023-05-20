@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
@@ -33,13 +34,14 @@ func handler(request events.APIGatewayProxyRequest) (events.APIGatewayProxyRespo
 
 	svc := dynamodb.New(session.New())
 
-	var event MyEvent
-	err := json.Unmarshal([]byte(request.Body), &event)
-	if err != nil {
-		return events.APIGatewayProxyResponse{}, err
-	}
+	walletAddress := request.PathParameters["walletAddress"]
+	// var event MyEvent
+	// err := json.Unmarshal([]byte(request.Body), &event)
+	// if err != nil {
+	// 	return events.APIGatewayProxyResponse{}, err
+	// }
 
-	walletAddress := event.WalletAddress
+	// walletAddress := event.WalletAddress
 
 	input := &dynamodb.GetItemInput{
 		TableName: aws.String("Collection-Watchlist"), // Replace with your table name
@@ -81,6 +83,8 @@ func handler(request events.APIGatewayProxyRequest) (events.APIGatewayProxyRespo
 	if err != nil {
 		return events.APIGatewayProxyResponse{}, err
 	}
+
+	log.Println(body)
 
 	// Return the response
 	return events.APIGatewayProxyResponse{
