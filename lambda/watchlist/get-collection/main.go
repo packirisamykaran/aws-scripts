@@ -28,8 +28,8 @@ type Watchlist struct {
 // Handler function to process the Lambda event
 func Handler(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
 	// Parse the request body
-	walletAddress := "b"
-
+	// walletAddress := "b"
+	walletAddress := request.QueryStringParameters["walletAddress"]
 	// Get the collection by walletAddress
 	result, err := getCollection(walletAddress)
 	if err != nil {

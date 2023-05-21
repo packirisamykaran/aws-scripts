@@ -2,16 +2,16 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"log"
-	"net/http"
-
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
+	"log"
+	"net/http"
 )
 
 var tableName = "Collection-Watchlist" // Replace with your DynamoDB table name
@@ -33,8 +33,20 @@ type Request struct {
 func Handler(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
 	// Parse the request body
 
-	WalletAddress := "b"
-	CollectionItem := "bitcoin"
+	// Read request body
+	var requestBody Request
+	err := json.Unmarshal([]byte(request.Body), &requestBody)
+	if err != nil {
+		log.Printf("Error unmarshaling request body: %v", err)
+		return events.APIGatewayProxyResponse{
+			StatusCode: http.StatusBadRequest,
+			Body:       "Invalid request body",
+		}, nil
+	}
+
+	// Access the fields of the request body
+	WalletAddress := requestBody.WalletAddress
+	CollectionItem := requestBody.CollectionItem
 
 	// Check if the walletAddress exists
 	exists, err := checkWalletAddressExists(WalletAddress)
