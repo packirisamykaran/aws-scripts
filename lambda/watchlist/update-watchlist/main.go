@@ -4,29 +4,30 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"net/http"
+
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
-	"log"
-	"net/http"
 )
 
-var tableName = "Collection-Watchlist" // Replace with your DynamoDB table name
+var tableName = "collection-watchlist-solana" // Replace with your DynamoDB table name
 var dynamoDBClient *dynamodb.DynamoDB
 
 // Watchlist struct representing the DynamoDB item
 type Watchlist struct {
-	WalletAddress string   `json:"walletAddress"`
-	Collection    []string `json:"collection"`
+	WalletAddress    string   `json:"walletAddress"`
+	CollectionIDList []string `json:"collectionIDList"`
 }
 
 // Request struct representing the request body
 type Request struct {
-	WalletAddress  string `json:"walletAddress"`
-	CollectionItem string `json:"collectionItem"`
+	WalletAddress string `json:"walletAddress"`
+	CollectionID  string `json:"collectionID"`
 }
 
 // Handler function to process the Lambda event
@@ -46,7 +47,7 @@ func Handler(ctx context.Context, request events.APIGatewayProxyRequest) (events
 
 	// Access the fields of the request body
 	WalletAddress := requestBody.WalletAddress
-	CollectionItem := requestBody.CollectionItem
+	CollectionID := requestBody.CollectionID
 
 	// Check if the walletAddress exists
 	exists, err := checkWalletAddressExists(WalletAddress)
@@ -60,8 +61,8 @@ func Handler(ctx context.Context, request events.APIGatewayProxyRequest) (events
 	}
 
 	if !exists {
-		// Insert walletAddress and collectionItem into the Collection list and add to database
-		err := insertNewWalletAddress(WalletAddress, CollectionItem)
+		// Insert walletAddress and collectionID into the Collection list and add to database
+		err := insertNewWalletAddress(WalletAddress, CollectionID)
 		if err != nil {
 			log.Printf("Error inserting wallet address: %v", err)
 			return events.APIGatewayProxyResponse{
@@ -82,20 +83,20 @@ func Handler(ctx context.Context, request events.APIGatewayProxyRequest) (events
 				nil
 		}
 
-		// Check if the collectionItem exists in the collection
+		// Check if the collectionID exists in the collection
 		exists := false
-		for i, item := range watchlist.Collection {
-			if item == CollectionItem {
+		for i, item := range watchlist.CollectionIDList {
+			if item == CollectionID {
 				exists = true
-				// Remove the collectionItem from collection
-				watchlist.Collection = append(watchlist.Collection[:i], watchlist.Collection[i+1:]...)
+				// Remove the collectionID from collection
+				watchlist.CollectionIDList = append(watchlist.CollectionIDList[:i], watchlist.CollectionIDList[i+1:]...)
 				break
 			}
 		}
 
-		// Add the collectionItem to collection if it doesn't exist
+		// Add the collectionID to collection if it doesn't exist
 		if !exists {
-			watchlist.Collection = append(watchlist.Collection, CollectionItem)
+			watchlist.CollectionIDList = append(watchlist.CollectionIDList, CollectionID)
 		}
 
 		// Save the updated watchlist to DynamoDB
@@ -112,7 +113,7 @@ func Handler(ctx context.Context, request events.APIGatewayProxyRequest) (events
 
 	return events.APIGatewayProxyResponse{
 		StatusCode: http.StatusOK,
-		Body:       "Success",
+		Body:       "updated",
 	}, nil
 }
 
@@ -133,11 +134,11 @@ func checkWalletAddressExists(walletAddress string) (bool, error) {
 	return result.Item != nil, nil
 }
 
-// Function to insert a new walletAddress and collectionItem into DynamoDB
-func insertNewWalletAddress(walletAddress, collectionItem string) error {
+// Function to insert a new walletAddress and collectionID into DynamoDB
+func insertNewWalletAddress(walletAddress, collectionID string) error {
 	watchlist := &Watchlist{
-		WalletAddress: walletAddress,
-		Collection:    []string{collectionItem},
+		WalletAddress:    walletAddress,
+		CollectionIDList: []string{collectionID},
 	}
 
 	item, err := dynamodbattribute.MarshalMap(watchlist)

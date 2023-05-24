@@ -7,22 +7,23 @@ import (
 	"log"
 	"net/http"
 
+	"strings"
+
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
-	"strings"
 )
 
-var tableName = "Collection-Watchlist" // Replace with your DynamoDB table name
+var tableName = "collection-watchlist-solana" // Replace with your DynamoDB table name
 var dynamoDBClient *dynamodb.DynamoDB
 
 // Watchlist struct representing the DynamoDB item
 type Watchlist struct {
-	WalletAddress string   `json:"walletAddress"`
-	Collection    []string `json:"collection"`
+	WalletAddress    string   `json:"walletAddress"`
+	CollectionIDList []string `json:"collectionIDList"`
 }
 
 // Handler function to process the Lambda event
@@ -31,9 +32,9 @@ func Handler(ctx context.Context, request events.APIGatewayProxyRequest) (events
 	// walletAddress := "b"
 	walletAddress := request.QueryStringParameters["walletAddress"]
 	// Get the collection by walletAddress
-	result, err := getCollection(walletAddress)
+	result, err := getCollectionIDList(walletAddress)
 	if err != nil {
-		log.Printf("Error getting collection: %v", err)
+		log.Printf("Error getting collectionIDList: %v", err)
 		return events.APIGatewayProxyResponse{
 			StatusCode: http.StatusInternalServerError,
 			Body:       http.StatusText(http.StatusInternalServerError),
@@ -52,7 +53,7 @@ func Handler(ctx context.Context, request events.APIGatewayProxyRequest) (events
 	}
 
 	// Build the response
-	responseBody, err := json.Marshal(result.Collection)
+	responseBody, err := json.Marshal(result.CollectionIDList)
 	if err != nil {
 		log.Printf("Error marshaling response body: %v", err)
 		return events.APIGatewayProxyResponse{
@@ -79,7 +80,7 @@ func Handler(ctx context.Context, request events.APIGatewayProxyRequest) (events
 }
 
 // Function to get the collection by walletAddress from DynamoDB
-func getCollection(walletAddress string) (*Watchlist, error) {
+func getCollectionIDList(walletAddress string) (*Watchlist, error) {
 	result, err := dynamoDBClient.GetItem(&dynamodb.GetItemInput{
 		TableName: aws.String(tableName),
 		Key: map[string]*dynamodb.AttributeValue{
@@ -94,8 +95,8 @@ func getCollection(walletAddress string) (*Watchlist, error) {
 
 	if result.Item == nil {
 		return &Watchlist{
-			WalletAddress: walletAddress,
-			Collection:    []string{},
+			WalletAddress:    walletAddress,
+			CollectionIDList: []string{},
 		}, nil
 	}
 
@@ -111,8 +112,8 @@ func getCollection(walletAddress string) (*Watchlist, error) {
 // Function to create an empty watchlist with the given walletAddress
 func createEmptyWatchlist(walletAddress string) error {
 	watchlist := &Watchlist{
-		WalletAddress: walletAddress,
-		Collection:    []string{},
+		WalletAddress:    walletAddress,
+		CollectionIDList: []string{},
 	}
 
 	item, err := dynamodbattribute.MarshalMap(watchlist)
