@@ -1,11 +1,10 @@
 package main
 
 import (
-	"lambda/scrapecollections/me"
+	"lambda/scrapecollections/tensor"
 )
 
 func main() {
-	println("hello world")
 
-	me.ScrapeCollections()
+	tensor.ScrapeTensor()
 }
